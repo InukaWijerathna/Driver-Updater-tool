@@ -8,6 +8,8 @@ from typing import List, Tuple
 
 logger = logging.getLogger(__name__)
 
+# WUA search criteria do not support filtering by WHQL directly.
+# We fetch IsBeta per update and filter in Python instead.
 _PS_SEARCH = r"""
 try {
     $s = New-Object -ComObject Microsoft.Update.Session
@@ -25,6 +27,8 @@ try {
             UpdateID           = [string]$u.Identity.UpdateID
             RevisionNumber     = [int]$u.Identity.RevisionNumber
             MaxDownloadSize    = [long]$u.MaxDownloadSize
+            IsBeta             = [bool]$u.IsBeta
+            BrowseOnly         = [bool]$u.BrowseOnly
         }
     }
     if ($list.Count -eq 0) { "[]" } else { $list | ConvertTo-Json -Depth 3 -Compress }
@@ -47,9 +51,17 @@ class WUDriverUpdate:
     update_id: str
     revision_number: int
     size_bytes: int
+    is_beta: bool = False
+    browse_only: bool = False
 
 
-def check_windows_update_drivers() -> List[WUDriverUpdate]:
+def check_windows_update_drivers(include_beta: bool = False) -> List[WUDriverUpdate]:
+    """
+    Return available driver updates from Windows Update.
+
+    By default only stable (non-beta, non-optional-only) updates are returned.
+    Pass include_beta=True (or --beta on CLI) to include them.
+    """
     try:
         result = subprocess.run(
             ["powershell", "-NonInteractive", "-NoProfile", "-Command", _PS_SEARCH],
@@ -69,9 +81,18 @@ def check_windows_update_drivers() -> List[WUDriverUpdate]:
             data = [data]
 
         updates = []
+        skipped_beta = 0
         for item in data:
             if not item:
                 continue
+            is_beta = bool(item.get("IsBeta", False))
+            browse_only = bool(item.get("BrowseOnly", False))
+
+            if not include_beta and (is_beta or browse_only):
+                skipped_beta += 1
+                logger.debug("Skipped beta/optional update: %s", item.get("Title", ""))
+                continue
+
             updates.append(WUDriverUpdate(
                 title=item.get("Title", ""),
                 driver_class=item.get("DriverClass", ""),
@@ -83,7 +104,12 @@ def check_windows_update_drivers() -> List[WUDriverUpdate]:
                 update_id=item.get("UpdateID", ""),
                 revision_number=item.get("RevisionNumber", 0),
                 size_bytes=item.get("MaxDownloadSize", 0),
+                is_beta=is_beta,
+                browse_only=browse_only,
             ))
+
+        if skipped_beta:
+            logger.info("Skipped %d beta/optional driver update(s). Use --beta to include.", skipped_beta)
 
         return updates
 

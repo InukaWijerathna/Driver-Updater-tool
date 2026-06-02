@@ -35,7 +35,9 @@ def is_admin() -> bool:
 
 
 def main() -> None:
-    debug = "--debug" in sys.argv
+    args = set(sys.argv[1:])
+    debug = "--debug" in args
+    include_beta = "--beta" in args
     logging.basicConfig(
         level=logging.DEBUG if debug else logging.WARNING,
         format="%(levelname)s [%(name)s]: %(message)s",
@@ -64,12 +66,13 @@ def main() -> None:
     console.print(f"[green]✓[/green] Found [bold]{len(drivers)}[/bold] installed drivers.\n")
 
     # 2. Check Windows Update
+    beta_label = " [yellow](+beta)[/yellow]" if include_beta else " [dim](stable only)[/dim]"
     with console.status(
-        "[bold green]Checking Windows Update for driver updates "
-        "[dim](may take up to 60 s)...[/dim]",
+        f"[bold green]Checking Windows Update for driver updates{beta_label}"
+        " [dim](may take up to 60 s)...[/dim]",
         spinner="dots",
     ):
-        wu_updates = check_windows_update_drivers()
+        wu_updates = check_windows_update_drivers(include_beta=include_beta)
 
     if wu_updates:
         console.print(
