@@ -50,68 +50,71 @@ def print_drivers_table(drivers: List[DriverInfo]) -> None:
 
 def print_updates_table(
     wu_updates: List[WUDriverUpdate],
-    mfr_updates: List[MfrDriverUpdate],
+    mfr_info: List[MfrDriverUpdate],
     installed: List[DriverInfo],
 ) -> None:
-    total = len(wu_updates) + len(mfr_updates)
+    # ── Windows Update updates ──────────────────────────────────────────────
+    if wu_updates:
+        wu_table = Table(
+            title=f"Windows Update — {len(wu_updates)} driver update(s) available",
+            box=box.ROUNDED,
+            header_style="bold yellow",
+            show_lines=False,
+        )
+        wu_table.add_column("#", style="dim", width=4, justify="right")
+        wu_table.add_column("Update Title", min_width=40)
+        wu_table.add_column("New Version", min_width=14)
+        wu_table.add_column("Date", min_width=12)
+        wu_table.add_column("Size", min_width=8, justify="right")
 
-    if total == 0:
+        installed_lower = {d.device_name.lower(): d for d in installed}
+
+        for i, u in enumerate(wu_updates, 1):
+            new_ver = u.driver_version or "[dim]—[/dim]"
+            size_str = _fmt_size(u.size_bytes)
+            wu_table.add_row(
+                str(i),
+                u.title,
+                f"[green]{new_ver}[/green]",
+                u.driver_date or "—",
+                size_str,
+            )
+
+        console.print(wu_table)
+        console.print()
+    else:
         console.print(
-            Panel("[bold green]All drivers are up to date![/bold green]",
-                  box=box.ROUNDED, style="green")
+            Panel(
+                "[bold green]Windows Update: no pending driver updates.[/bold green]",
+                box=box.ROUNDED,
+                style="green",
+            )
         )
         console.print()
-        return
 
-    table = Table(
-        title=f"Available Driver Updates — {total} found",
-        box=box.ROUNDED,
-        header_style="bold yellow",
-        show_lines=False,
-    )
-    table.add_column("#", style="dim", width=4, justify="right")
-    table.add_column("Device / Update Title", min_width=38)
-    table.add_column("Current", min_width=13)
-    table.add_column("Available", min_width=13)
-    table.add_column("Source", min_width=11)
-    table.add_column("Size", min_width=8, justify="right")
-
-    idx = 1
-    installed_lower = {d.device_name.lower(): d for d in installed}
-
-    for u in wu_updates:
-        # Try to match update to an installed driver to show current version
-        current_ver = "—"
-        model_lower = u.driver_model.lower() if u.driver_model else ""
-        if model_lower and model_lower in installed_lower:
-            current_ver = installed_lower[model_lower].driver_version or "—"
-
-        new_ver = u.driver_version or "[dim]see WU[/dim]"
-        size_str = _fmt_size(u.size_bytes)
-
-        table.add_row(
-            str(idx),
-            u.title,
-            current_ver,
-            f"[green]{new_ver}[/green]",
-            "[cyan]Windows Update[/cyan]",
-            size_str,
+    # ── Detected GPU / manufacturer info ───────────────────────────────────
+    if mfr_info:
+        gpu_table = Table(
+            title="Detected GPU Drivers",
+            box=box.ROUNDED,
+            header_style="bold magenta",
+            show_lines=False,
         )
-        idx += 1
+        gpu_table.add_column("GPU / Device", min_width=30)
+        gpu_table.add_column("Installed Version", min_width=16)
+        gpu_table.add_column("Manufacturer", min_width=10)
+        gpu_table.add_column("Note", min_width=30)
 
-    for u in mfr_updates:
-        table.add_row(
-            str(idx),
-            u.device_name,
-            u.current_version,
-            f"[green]{u.latest_version}[/green]",
-            f"[magenta]{u.source}[/magenta]",
-            "—",
-        )
-        idx += 1
+        for u in mfr_info:
+            gpu_table.add_row(
+                u.device_name,
+                u.current_version,
+                f"[magenta]{u.manufacturer}[/magenta]",
+                f"[dim]{u.note}[/dim]",
+            )
 
-    console.print(table)
-    console.print()
+        console.print(gpu_table)
+        console.print()
 
 
 def _fmt_size(size_bytes: int) -> str:

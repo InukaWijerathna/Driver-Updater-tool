@@ -1,8 +1,6 @@
 """Interactive update menu orchestration."""
 
-import ctypes
 import logging
-import sys
 from typing import List
 
 from .display import console, print_updates_table, print_drivers_table
@@ -16,31 +14,28 @@ logger = logging.getLogger(__name__)
 def run_interactive_menu(
     drivers: List[DriverInfo],
     wu_updates: List[WUDriverUpdate],
-    mfr_updates: List[MfrDriverUpdate],
+    mfr_info: List[MfrDriverUpdate],
     is_admin: bool,
 ) -> None:
     while True:
-        print_updates_table(wu_updates, mfr_updates, drivers)
-        _print_menu(wu_updates, mfr_updates, is_admin)
+        print_updates_table(wu_updates, mfr_info, drivers)
+        _print_menu(wu_updates, is_admin)
 
         choice = _prompt("Enter choice")
 
-        if choice == "1":
-            if wu_updates or mfr_updates:
-                _install_all(wu_updates, mfr_updates, is_admin)
-            else:
-                console.print("[yellow]No updates to install.[/yellow]\n")
+        if choice == "1" and wu_updates:
+            _install_all_wu(wu_updates, is_admin)
 
-        elif choice == "2":
-            if wu_updates or mfr_updates:
-                _install_selected(wu_updates, mfr_updates, is_admin)
-            else:
-                console.print("[yellow]No updates available.[/yellow]\n")
+        elif choice == "2" and wu_updates:
+            _install_selected_wu(wu_updates, is_admin)
 
         elif choice == "3":
             print_drivers_table(drivers)
 
-        elif choice in ("4", "q", "Q", ""):
+        elif choice == "4":
+            _show_manufacturer_links(mfr_info)
+
+        elif choice in ("5", "q", "Q", ""):
             console.print("[dim]Goodbye.[/dim]")
             break
 
@@ -49,25 +44,22 @@ def run_interactive_menu(
 
 
 # ---------------------------------------------------------------------------
-# Menu helpers
+# Menu
 # ---------------------------------------------------------------------------
 
-def _print_menu(
-    wu_updates: List[WUDriverUpdate],
-    mfr_updates: List[MfrDriverUpdate],
-    is_admin: bool,
-) -> None:
-    has_updates = bool(wu_updates or mfr_updates)
+def _print_menu(wu_updates: List[WUDriverUpdate], is_admin: bool) -> None:
     console.print("[bold]Options:[/bold]")
-    if has_updates:
-        console.print("  [cyan][1][/cyan] Install all updates")
-        console.print("  [cyan][2][/cyan] Select updates to install")
+    if wu_updates:
+        console.print("  [cyan][1][/cyan] Install all Windows Update driver updates")
+        console.print("  [cyan][2][/cyan] Select specific updates to install")
     console.print("  [cyan][3][/cyan] View all installed drivers")
-    console.print("  [cyan][4][/cyan] Exit")
-    if not is_admin and has_updates:
+    console.print("  [cyan][4][/cyan] Show manufacturer download links")
+    console.print("  [cyan][5][/cyan] Exit")
+
+    if not is_admin and wu_updates:
         console.print(
             "\n[yellow]⚠  Not running as Administrator — "
-            "installation will fail without elevation.[/yellow]"
+            "run run_admin.bat to enable update installation.[/yellow]"
         )
     console.print()
 
@@ -76,44 +68,30 @@ def _prompt(label: str) -> str:
     try:
         return input(f"{label}: ").strip()
     except (KeyboardInterrupt, EOFError):
-        return "4"
+        return "5"
 
 
 # ---------------------------------------------------------------------------
 # Install flows
 # ---------------------------------------------------------------------------
 
-def _install_all(
-    wu_updates: List[WUDriverUpdate],
-    mfr_updates: List[MfrDriverUpdate],
-    is_admin: bool,
-) -> None:
-    if wu_updates:
-        if not _ensure_admin(is_admin):
-            return
-        console.print(f"[bold]Installing {len(wu_updates)} Windows Update driver(s)...[/bold]")
-        with console.status("[bold green]Downloading and installing — please wait...", spinner="dots"):
-            success, reboot = install_wu_updates([u.update_id for u in wu_updates])
-        _report_wu_result(success, reboot)
-
-    if mfr_updates:
-        _show_mfr_links(mfr_updates)
+def _install_all_wu(wu_updates: List[WUDriverUpdate], is_admin: bool) -> None:
+    if not _ensure_admin(is_admin):
+        return
+    console.print(f"[bold]Installing {len(wu_updates)} driver update(s) via Windows Update...[/bold]")
+    with console.status("[bold green]Downloading and installing — please wait...", spinner="dots"):
+        success, reboot = install_wu_updates([u.update_id for u in wu_updates])
+    _report_wu_result(success, reboot)
 
 
-def _install_selected(
-    wu_updates: List[WUDriverUpdate],
-    mfr_updates: List[MfrDriverUpdate],
-    is_admin: bool,
-) -> None:
-    all_entries = [(u, "wu") for u in wu_updates] + [(u, "mfr") for u in mfr_updates]
-
-    console.print("[bold]Select updates (comma-separated numbers, e.g. 1,3):[/bold]")
-    for i, (u, kind) in enumerate(all_entries, 1):
-        label = u.title if kind == "wu" else f"{u.device_name} ({u.manufacturer})"
-        console.print(f"  [cyan][{i}][/cyan] {label}")
+def _install_selected_wu(wu_updates: List[WUDriverUpdate], is_admin: bool) -> None:
+    console.print("[bold]Select updates to install (comma-separated numbers):[/bold]")
+    for i, u in enumerate(wu_updates, 1):
+        ver = f"  [{u.driver_version}]" if u.driver_version else ""
+        console.print(f"  [cyan][{i}][/cyan] {u.title}{ver}")
     console.print()
 
-    raw = _prompt("Your selection (Enter to cancel)")
+    raw = _prompt("Selection (Enter to cancel)")
     if not raw:
         return
 
@@ -123,30 +101,37 @@ def _install_selected(
         console.print("[red]Invalid selection.[/red]\n")
         return
 
-    selected_wu: List[WUDriverUpdate] = []
-    selected_mfr: List[MfrDriverUpdate] = []
-
+    selected = []
     for idx in indices:
-        if idx < 0 or idx >= len(all_entries):
-            console.print(f"[yellow]  Index {idx + 1} out of range — skipped.[/yellow]")
-            continue
-        update, kind = all_entries[idx]
-        if kind == "wu":
-            selected_wu.append(update)
+        if 0 <= idx < len(wu_updates):
+            selected.append(wu_updates[idx])
         else:
-            selected_mfr.append(update)
+            console.print(f"[yellow]  Index {idx + 1} out of range — skipped.[/yellow]")
 
-    if selected_wu:
-        if not _ensure_admin(is_admin):
-            return
-        console.print(f"[bold]Installing {len(selected_wu)} update(s)...[/bold]")
-        with console.status("[bold green]Downloading and installing...", spinner="dots"):
-            success, reboot = install_wu_updates([u.update_id for u in selected_wu])
-        _report_wu_result(success, reboot)
+    if not selected:
+        console.print("[yellow]No valid updates selected.[/yellow]\n")
+        return
 
-    if selected_mfr:
-        _show_mfr_links(selected_mfr)
+    if not _ensure_admin(is_admin):
+        return
 
+    console.print(f"[bold]Installing {len(selected)} update(s)...[/bold]")
+    with console.status("[bold green]Downloading and installing...", spinner="dots"):
+        success, reboot = install_wu_updates([u.update_id for u in selected])
+    _report_wu_result(success, reboot)
+
+
+def _show_manufacturer_links(mfr_info: List[MfrDriverUpdate]) -> None:
+    if not mfr_info:
+        console.print("[dim]No GPUs detected.[/dim]\n")
+        return
+    console.print("[bold]Manufacturer download links:[/bold]")
+    for u in mfr_info:
+        console.print(
+            f"  [cyan]{u.device_name}[/cyan]  "
+            f"installed: [yellow]{u.current_version}[/yellow]\n"
+            f"    {u.download_url}"
+        )
     console.print()
 
 
@@ -159,7 +144,7 @@ def _ensure_admin(is_admin: bool) -> bool:
         return True
     console.print(
         "[red]Administrator privileges required.\n"
-        "Re-launch the tool with: right-click → Run as administrator[/red]\n"
+        "  Double-click run_admin.bat to restart with elevation.[/red]\n"
     )
     return False
 
@@ -174,17 +159,7 @@ def _report_wu_result(success: bool, reboot: bool) -> None:
     else:
         console.print(
             "[red]✗ Installation failed. "
-            "Run with --debug for details, or install manually via Windows Update.[/red]"
-        )
-    console.print()
-
-
-def _show_mfr_links(updates: List[MfrDriverUpdate]) -> None:
-    console.print("[bold]Manufacturer updates — manual download required:[/bold]")
-    for u in updates:
-        console.print(
-            f"  [cyan]{u.device_name}[/cyan]  "
-            f"[dim]{u.current_version}[/dim] → [green]{u.latest_version}[/green]  "
-            f"[link={u.download_url}]{u.download_url}[/link]"
+            "Try installing manually via Settings → Windows Update → Advanced options → "
+            "Optional updates.[/red]"
         )
     console.print()

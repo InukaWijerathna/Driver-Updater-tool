@@ -79,23 +79,15 @@ def main() -> None:
     else:
         console.print("[green]✓[/green] Windows Update: no pending driver updates.\n")
 
-    # 3. Check manufacturer sites
-    from src.manufacturer_check import _find_nvidia_display_driver  # noqa: PLC0415
-    nvidia_gpu = _find_nvidia_display_driver(drivers)
-    mfr_label = f"NVIDIA {nvidia_gpu.device_name}" if nvidia_gpu else "manufacturer sites"
-
-    with console.status(
-        f"[bold green]Checking {mfr_label} for updates...", spinner="dots"
-    ):
+    # 3. Detect manufacturer GPUs (NVIDIA, AMD, Intel)
+    with console.status("[bold green]Detecting GPU drivers...", spinner="dots"):
         mfr_updates = check_manufacturer_updates(drivers)
 
     if mfr_updates:
-        console.print(
-            f"[green]✓[/green] Manufacturer check: "
-            f"[bold]{len(mfr_updates)}[/bold] update(s) found.\n"
-        )
+        gpu_names = ", ".join(u.device_name for u in mfr_updates)
+        console.print(f"[green]✓[/green] Detected GPU(s): [bold]{gpu_names}[/bold]\n")
     else:
-        console.print("[green]✓[/green] Manufacturer check complete.\n")
+        console.print("[green]✓[/green] No discrete GPU drivers found.\n")
 
     # 4. Interactive menu
     run_interactive_menu(drivers, wu_updates, mfr_updates, is_admin=admin)
