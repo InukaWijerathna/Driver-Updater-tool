@@ -7,7 +7,7 @@ from rich.panel import Panel
 from rich.text import Text
 from rich import box
 
-from .driver_detector import DriverInfo
+from .driver_detector import DriverInfo, ProblemDevice
 from .windows_update import WUDriverUpdate
 from .manufacturer_check import MfrDriverUpdate
 
@@ -48,11 +48,55 @@ def print_drivers_table(drivers: List[DriverInfo]) -> None:
     console.print()
 
 
+def print_problem_devices_table(problems: List[ProblemDevice]) -> None:
+    table = Table(
+        title=f"Devices With Missing/Broken Drivers ({len(problems)})",
+        box=box.ROUNDED,
+        header_style="bold red",
+        show_lines=False,
+    )
+    table.add_column("#", style="dim", width=4, justify="right")
+    table.add_column("Device", min_width=30)
+    table.add_column("Class", min_width=14)
+    table.add_column("Problem", min_width=30)
+
+    for i, d in enumerate(problems, 1):
+        table.add_row(
+            str(i),
+            d.device_name or "[dim]Unknown device[/dim]",
+            d.device_class or "[dim]—[/dim]",
+            f"[red]{d.description}[/red] [dim](code {d.error_code})[/dim]",
+        )
+
+    console.print(table)
+    console.print()
+
+
 def print_updates_table(
     wu_updates: List[WUDriverUpdate],
     mfr_info: List[MfrDriverUpdate],
     installed: List[DriverInfo],
+    problem_devices: List[ProblemDevice],
 ) -> None:
+    # ── Devices with missing/broken drivers ─────────────────────────────────
+    if problem_devices:
+        panel_lines = "\n".join(
+            f"  • [bold]{d.device_name}[/bold] — {d.description} (code {d.error_code})"
+            for d in problem_devices
+        )
+        console.print(
+            Panel(
+                f"[bold red]{len(problem_devices)} device(s) have missing or broken drivers:[/bold red]\n"
+                f"{panel_lines}\n\n"
+                "[dim]These won't appear in Windows Update — try the manufacturer's "
+                "support site for the device/model, or option [4] for known GPU links.[/dim]",
+                box=box.ROUNDED,
+                style="red",
+                title="Missing Drivers",
+            )
+        )
+        console.print()
+
     # ── Windows Update updates ──────────────────────────────────────────────
     if wu_updates:
         wu_table = Table(

@@ -3,8 +3,8 @@
 import logging
 from typing import List
 
-from .display import console, print_updates_table, print_drivers_table
-from .driver_detector import DriverInfo
+from .display import console, print_updates_table, print_drivers_table, print_problem_devices_table
+from .driver_detector import DriverInfo, ProblemDevice
 from .windows_update import WUDriverUpdate, install_wu_updates
 from .manufacturer_check import MfrDriverUpdate
 
@@ -15,11 +15,12 @@ def run_interactive_menu(
     drivers: List[DriverInfo],
     wu_updates: List[WUDriverUpdate],
     mfr_info: List[MfrDriverUpdate],
+    problem_devices: List[ProblemDevice],
     is_admin: bool,
 ) -> None:
     while True:
-        print_updates_table(wu_updates, mfr_info, drivers)
-        _print_menu(wu_updates, is_admin)
+        print_updates_table(wu_updates, mfr_info, drivers, problem_devices)
+        _print_menu(wu_updates, problem_devices, is_admin)
 
         choice = _prompt("Enter choice")
 
@@ -35,7 +36,10 @@ def run_interactive_menu(
         elif choice == "4":
             _show_manufacturer_links(mfr_info)
 
-        elif choice in ("5", "q", "Q", ""):
+        elif choice == "5" and problem_devices:
+            print_problem_devices_table(problem_devices)
+
+        elif choice in ("6", "q", "Q", ""):
             console.print("[dim]Goodbye.[/dim]")
             break
 
@@ -47,14 +51,16 @@ def run_interactive_menu(
 # Menu
 # ---------------------------------------------------------------------------
 
-def _print_menu(wu_updates: List[WUDriverUpdate], is_admin: bool) -> None:
+def _print_menu(wu_updates: List[WUDriverUpdate], problem_devices: List[ProblemDevice], is_admin: bool) -> None:
     console.print("[bold]Options:[/bold]")
     if wu_updates:
         console.print("  [cyan][1][/cyan] Install all Windows Update driver updates")
         console.print("  [cyan][2][/cyan] Select specific updates to install")
     console.print("  [cyan][3][/cyan] View all installed drivers")
     console.print("  [cyan][4][/cyan] Show manufacturer download links")
-    console.print("  [cyan][5][/cyan] Exit")
+    if problem_devices:
+        console.print(f"  [cyan][5][/cyan] View devices with missing/broken drivers ({len(problem_devices)})")
+    console.print("  [cyan][6][/cyan] Exit")
 
     if not is_admin and wu_updates:
         console.print(

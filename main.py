@@ -21,7 +21,7 @@ _ensure_deps()
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.display import console, print_banner
-from src.driver_detector import get_installed_drivers
+from src.driver_detector import get_installed_drivers, get_problem_devices
 from src.windows_update import check_windows_update_drivers
 from src.manufacturer_check import check_manufacturer_updates
 from src.updater import run_interactive_menu
@@ -37,7 +37,12 @@ def is_admin() -> bool:
 def main() -> None:
     args = set(sys.argv[1:])
     debug = "--debug" in args
-    include_beta = "--beta" in args
+    # Optional/beta driver updates are included by default — Windows' own
+    # Optional Updates page (and tools like Driver Easy) count these too,
+    # and excluding them was the main reason this tool reported fewer
+    # available updates than other scanners. Pass --stable-only to match
+    # the old behaviour.
+    include_beta = "--stable-only" not in args
     logging.basicConfig(
         level=logging.DEBUG if debug else logging.WARNING,
         format="%(levelname)s [%(name)s]: %(message)s",
@@ -65,8 +70,22 @@ def main() -> None:
 
     console.print(f"[green]✓[/green] Found [bold]{len(drivers)}[/bold] installed drivers.\n")
 
-    # 2. Check Windows Update
-    beta_label = " [yellow](+beta)[/yellow]" if include_beta else " [dim](stable only)[/dim]"
+    # 2. Find devices with missing/broken drivers (these never show up in the
+    #    "installed drivers" scan above — Driver Easy and friends report them
+    #    separately, which is why they tend to show more "missing" entries).
+    with console.status("[bold green]Looking for devices with missing or broken drivers...", spinner="dots"):
+        problem_devices = get_problem_devices()
+
+    if problem_devices:
+        console.print(
+            f"[yellow]⚠[/yellow]  [bold]{len(problem_devices)}[/bold] device(s) "
+            f"have missing or broken drivers.\n"
+        )
+    else:
+        console.print("[green]✓[/green] No devices with missing/broken drivers found.\n")
+
+    # 3. Check Windows Update
+    beta_label = " [yellow](+optional)[/yellow]" if include_beta else " [dim](stable only)[/dim]"
     with console.status(
         f"[bold green]Checking Windows Update for driver updates{beta_label}"
         " [dim](may take up to 60 s)...[/dim]",
@@ -82,7 +101,7 @@ def main() -> None:
     else:
         console.print("[green]✓[/green] Windows Update: no pending driver updates.\n")
 
-    # 3. Detect manufacturer GPUs (NVIDIA, AMD, Intel)
+    # 4. Detect manufacturer GPUs (NVIDIA, AMD, Intel)
     with console.status("[bold green]Detecting GPU drivers...", spinner="dots"):
         mfr_updates = check_manufacturer_updates(drivers)
 
@@ -92,8 +111,8 @@ def main() -> None:
     else:
         console.print("[green]✓[/green] No discrete GPU drivers found.\n")
 
-    # 4. Interactive menu
-    run_interactive_menu(drivers, wu_updates, mfr_updates, is_admin=admin)
+    # 5. Interactive menu
+    run_interactive_menu(drivers, wu_updates, mfr_updates, problem_devices, is_admin=admin)
 
 
 if __name__ == "__main__":
