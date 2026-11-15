@@ -88,7 +88,7 @@ def print_updates_table(
             Panel(
                 f"[bold red]{len(problem_devices)} device(s) have missing or broken drivers:[/bold red]\n"
                 f"{panel_lines}\n\n"
-                "[dim]These won't appear in Windows Update — try the manufacturer's "
+                "[dim]Check Windows Update or try the manufacturer's "
                 "support site for the device/model, or option [4] for known GPU links.[/dim]",
                 box=box.ROUNDED,
                 style="red",
@@ -129,7 +129,7 @@ def print_updates_table(
     else:
         console.print(
             Panel(
-                "[bold green]Windows Update: no pending driver updates.[/bold green]",
+                "[bold green]Windows Update: no pending driver updates matching the selected filters.[/bold green]",
                 box=box.ROUNDED,
                 style="green",
             )

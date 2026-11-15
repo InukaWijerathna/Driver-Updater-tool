@@ -5,7 +5,7 @@ from typing import List
 
 from .display import console, print_updates_table, print_drivers_table, print_problem_devices_table
 from .driver_detector import DriverInfo, ProblemDevice
-from .windows_update import WUDriverUpdate, install_wu_updates
+from .windows_update import WUDriverUpdate, InstallationResult, install_wu_updates
 from .manufacturer_check import MfrDriverUpdate
 
 logger = logging.getLogger(__name__)
@@ -74,7 +74,7 @@ def _prompt(label: str) -> str:
     try:
         return input(f"{label}: ").strip()
     except (KeyboardInterrupt, EOFError):
-        return "5"
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -86,8 +86,11 @@ def _install_all_wu(wu_updates: List[WUDriverUpdate], is_admin: bool) -> None:
         return
     console.print(f"[bold]Installing {len(wu_updates)} driver update(s) via Windows Update...[/bold]")
     with console.status("[bold green]Downloading and installing — please wait...", spinner="dots"):
-        success, reboot = install_wu_updates([u.update_id for u in wu_updates])
-    _report_wu_result(success, reboot)
+        result = install_wu_updates(wu_updates)
+    _report_wu_result(result)
+    _remove_installed(wu_updates, result)
+    if result.status_unknown:
+        raise SystemExit(1)
 
 
 def _install_selected_wu(wu_updates: List[WUDriverUpdate], is_admin: bool) -> None:
@@ -110,7 +113,8 @@ def _install_selected_wu(wu_updates: List[WUDriverUpdate], is_admin: bool) -> No
     selected = []
     for idx in indices:
         if 0 <= idx < len(wu_updates):
-            selected.append(wu_updates[idx])
+            if wu_updates[idx] not in selected:
+                selected.append(wu_updates[idx])
         else:
             console.print(f"[yellow]  Index {idx + 1} out of range — skipped.[/yellow]")
 
@@ -123,8 +127,11 @@ def _install_selected_wu(wu_updates: List[WUDriverUpdate], is_admin: bool) -> No
 
     console.print(f"[bold]Installing {len(selected)} update(s)...[/bold]")
     with console.status("[bold green]Downloading and installing...", spinner="dots"):
-        success, reboot = install_wu_updates([u.update_id for u in selected])
-    _report_wu_result(success, reboot)
+        result = install_wu_updates(selected)
+    _report_wu_result(result)
+    _remove_installed(wu_updates, result)
+    if result.status_unknown:
+        raise SystemExit(1)
 
 
 def _show_manufacturer_links(mfr_info: List[MfrDriverUpdate]) -> None:
@@ -155,17 +162,35 @@ def _ensure_admin(is_admin: bool) -> bool:
     return False
 
 
-def _report_wu_result(success: bool, reboot: bool) -> None:
-    if success:
+def _remove_installed(updates: List[WUDriverUpdate], result: InstallationResult) -> None:
+    if result.status_unknown:
+        # Do not guess which updates finished when PowerShell's status is unknown.
+        return
+    installed = {u.update_id for u in result.updates if u.stage == "install" and u.result_code == 2}
+    updates[:] = [u for u in updates if u.update_id not in installed]
+
+
+def _report_wu_result(result: InstallationResult) -> None:
+    if result.status_unknown:
+        console.print("[yellow]Installation status unknown. Rescan before retrying.[/yellow]")
+    elif result.success:
         console.print("[green]✓ Installation successful.[/green]")
-        if reboot:
-            console.print(
-                "[yellow]⚠  A system restart is required to complete the installation.[/yellow]"
-            )
+    elif any(u.stage == "install" and u.result_code == 2 for u in result.updates):
+        console.print("[yellow]Some updates installed, but the operation did not fully succeed.[/yellow]")
     else:
+        console.print("[red]Installation did not complete successfully.[/red]")
+
+    if result.error:
+        console.print(result.error, style="red", markup=False)
+    for update in result.updates:
+        if update.stage == "install" and update.result_code == 2:
+            continue
+        error_hex = f"0x{update.hresult & 0xFFFFFFFF:08X}"
         console.print(
-            "[red]✗ Installation failed. "
-            "Try installing manually via Settings → Windows Update → Advanced options → "
-            "Optional updates.[/red]"
+            f"  {update.title}: {update.stage} did not succeed "
+            f"(result {update.result_code}, HRESULT {error_hex})",
+            style="yellow", markup=False,
         )
+    if result.reboot_required:
+        console.print("[yellow]⚠ A system restart is required to complete the installation.[/yellow]")
     console.print()

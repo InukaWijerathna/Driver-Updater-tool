@@ -44,20 +44,20 @@ def _wmi_to_nvidia_version(wmi_ver: str) -> str:
 
 def _find_nvidia_display_driver(drivers: List[DriverInfo]) -> Optional[DriverInfo]:
     for d in drivers:
-        if "NVIDIA" in d.manufacturer.upper() and "Display" in d.device_class:
+        if "NVIDIA" in d.manufacturer.upper() and d.device_class.casefold() == "display":
             return d
     for d in drivers:
-        if "NVIDIA GeForce" in d.device_name or "NVIDIA Quadro" in d.device_name:
+        if "nvidia geforce" in d.device_name.casefold() or "nvidia quadro" in d.device_name.casefold():
             return d
     return None
 
 
 def _find_amd_display_driver(drivers: List[DriverInfo]) -> Optional[DriverInfo]:
     for d in drivers:
-        if d.device_class == "Display" and (
+        if d.device_class.casefold() == "display" and (
             "AMD" in d.manufacturer.upper() or
-            "Advanced Micro" in d.manufacturer or
-            "Radeon" in d.device_name
+            "advanced micro" in d.manufacturer.casefold() or
+            "radeon" in d.device_name.casefold()
         ):
             return d
     return None
@@ -65,7 +65,7 @@ def _find_amd_display_driver(drivers: List[DriverInfo]) -> Optional[DriverInfo]:
 
 def _find_intel_display_driver(drivers: List[DriverInfo]) -> Optional[DriverInfo]:
     for d in drivers:
-        if d.device_class == "Display" and "Intel" in d.manufacturer:
+        if d.device_class.casefold() == "display" and "intel" in d.manufacturer.casefold():
             return d
     return None
 

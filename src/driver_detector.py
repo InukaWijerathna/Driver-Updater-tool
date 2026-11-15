@@ -1,10 +1,10 @@
 """Enumerate installed drivers via WMI/PowerShell."""
 
-import subprocess
-import json
 import logging
 from dataclasses import dataclass
 from typing import List
+
+from .powershell import ScanError, run_json_scan
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +13,7 @@ try {
     $drivers = Get-WmiObject Win32_PnPSignedDriver -ErrorAction Stop |
         Where-Object { $_.DeviceName -and $_.DeviceName.Trim() -ne "" } |
         Select-Object DeviceName, DriverVersion, Manufacturer, DeviceClass, HardWareID, InfName, DeviceID
-    @($drivers) | ConvertTo-Json -Depth 2 -Compress
+    ConvertTo-Json -InputObject @($drivers) -Depth 2 -Compress
 } catch {
     Write-Error $_.Exception.Message
     exit 1
@@ -28,7 +28,7 @@ try {
     $devices = Get-WmiObject Win32_PNPEntity -ErrorAction Stop |
         Where-Object { $_.ConfigManagerErrorCode -ne 0 -and $_.Name } |
         Select-Object Name, ConfigManagerErrorCode, PNPClass, DeviceID
-    @($devices) | ConvertTo-Json -Depth 2 -Compress
+    ConvertTo-Json -InputObject @($devices) -Depth 2 -Compress
 } catch {
     Write-Error $_.Exception.Message
     exit 1
@@ -87,80 +87,25 @@ class ProblemDevice:
 
 
 def get_installed_drivers() -> List[DriverInfo]:
-    try:
-        result = subprocess.run(
-            ["powershell", "-NonInteractive", "-NoProfile", "-Command", _PS_GET_DRIVERS],
-            capture_output=True, text=True, timeout=90,
-            encoding="utf-8", errors="replace",
-        )
-        if result.returncode != 0:
-            logger.error("PowerShell WMI query failed: %s", result.stderr[:500])
-            return []
-
-        raw = result.stdout.strip()
-        if not raw:
-            return []
-
-        data = json.loads(raw)
-        if isinstance(data, dict):
-            data = [data]
-
-        drivers = []
-        for item in data:
-            if not item:
-                continue
-            drivers.append(DriverInfo(
-                device_name=str(item.get("DeviceName") or ""),
-                driver_version=str(item.get("DriverVersion") or ""),
-                manufacturer=str(item.get("Manufacturer") or ""),
-                device_class=str(item.get("DeviceClass") or ""),
-                hardware_id=str(item.get("HardWareID") or ""),
-                inf_name=str(item.get("InfName") or ""),
-                device_id=str(item.get("DeviceID") or ""),
-            ))
-
-        return sorted(drivers, key=lambda d: (d.device_class.lower(), d.device_name.lower()))
-
-    except subprocess.TimeoutExpired:
-        logger.error("Timed out scanning installed drivers (>90s)")
-        return []
-    except json.JSONDecodeError as e:
-        logger.error("Failed to parse driver list JSON: %s", e)
-        return []
-    except Exception as e:
-        logger.error("Unexpected error scanning drivers: %s", e)
-        return []
+    data = run_json_scan(_PS_GET_DRIVERS, "Installed driver scan", 90)
+    drivers = [DriverInfo(
+        device_name=str(item.get("DeviceName") or ""),
+        driver_version=str(item.get("DriverVersion") or ""),
+        manufacturer=str(item.get("Manufacturer") or ""),
+        device_class=str(item.get("DeviceClass") or ""),
+        hardware_id=str(item.get("HardWareID") or ""),
+        inf_name=str(item.get("InfName") or ""),
+        device_id=str(item.get("DeviceID") or ""),
+    ) for item in data]
+    return sorted(drivers, key=lambda d: (d.device_class.lower(), d.device_name.lower()))
 
 
 def get_problem_devices() -> List[ProblemDevice]:
-    """
-    Devices Windows knows about but can't drive properly — missing, disabled,
-    or failed drivers. These never appear in Win32_PnPSignedDriver, so a
-    "what's installed" scan alone misses exactly the things tools like
-    Driver Easy report as "missing drivers".
-    """
+    """Return devices with configuration problems, including missing drivers."""
+    data = run_json_scan(_PS_GET_PROBLEM_DEVICES, "Problem device scan", 90)
+    devices = []
     try:
-        result = subprocess.run(
-            ["powershell", "-NonInteractive", "-NoProfile", "-Command", _PS_GET_PROBLEM_DEVICES],
-            capture_output=True, text=True, timeout=90,
-            encoding="utf-8", errors="replace",
-        )
-        if result.returncode != 0:
-            logger.error("PowerShell PNP entity query failed: %s", result.stderr[:500])
-            return []
-
-        raw = result.stdout.strip()
-        if not raw:
-            return []
-
-        data = json.loads(raw)
-        if isinstance(data, dict):
-            data = [data]
-
-        devices = []
         for item in data:
-            if not item:
-                continue
             code = int(item.get("ConfigManagerErrorCode") or 0)
             devices.append(ProblemDevice(
                 device_name=str(item.get("Name") or ""),
@@ -169,15 +114,6 @@ def get_problem_devices() -> List[ProblemDevice]:
                 description=_CM_PROBLEM_CODES.get(code, f"Device problem (code {code})"),
                 device_id=str(item.get("DeviceID") or ""),
             ))
-
-        return sorted(devices, key=lambda d: d.device_name.lower())
-
-    except subprocess.TimeoutExpired:
-        logger.error("Timed out scanning problem devices (>90s)")
-        return []
-    except json.JSONDecodeError as e:
-        logger.error("Failed to parse problem device list JSON: %s", e)
-        return []
-    except Exception as e:
-        logger.error("Unexpected error scanning problem devices: %s", e)
-        return []
+    except (TypeError, ValueError) as exc:
+        raise ScanError(f"Problem device scan returned an invalid error code: {exc}") from exc
+    return sorted(devices, key=lambda d: d.device_name.lower())
